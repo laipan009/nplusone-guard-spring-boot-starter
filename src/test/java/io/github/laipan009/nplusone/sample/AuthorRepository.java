@@ -1,0 +1,6 @@
+package io.github.laipan009.nplusone.sample;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface AuthorRepository extends JpaRepository<Author, Long> {
+}
