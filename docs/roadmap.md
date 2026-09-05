@@ -16,4 +16,3 @@ anything else is wrapped from test code with `detector.inScope(...)`.
    the call tree of the session to the failure message (`nplusone.report=true`).
 4. **Call site for explicit repeats.** Capture the first application frame that issued a repeated
    explicit query, so the hint names the loop instead of only the SQL.
-5. **Maven Central publication** after validation on real suites.

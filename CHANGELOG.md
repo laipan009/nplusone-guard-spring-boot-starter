@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-09-06
 
 First public version. Experimental; not yet validated on a production service's test suite.
 

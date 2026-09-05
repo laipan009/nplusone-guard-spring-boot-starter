@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Java 21](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.laipan009.nplusone/nplusone-guard-spring-boot-starter)](https://central.sonatype.com/artifact/io.github.laipan009.nplusone/nplusone-guard-spring-boot-starter)
 
 **Валит тесты Spring Boot, когда Hibernate выполняет N+1 запрос.** Одна зависимость в test scope,
 без аннотаций, базового класса и assert'ов: каждый `@SpringBootTest` под защитой.
@@ -56,22 +57,19 @@ unit-тесты зелёные, интеграционные зелёные, н�
 
 ## Быстрый старт
 
-Артефакта в Maven Central пока нет. Соберите и установите локально:
-
-```sh
-./mvnw clean verify
-./mvnw install -DskipTests
-```
-
-Подключите в проект, который хотите защитить:
+Подключите зависимость в проект, который хотите защитить:
 
 ```xml
 <dependency>
     <groupId>io.github.laipan009.nplusone</groupId>
     <artifactId>nplusone-guard-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <scope>test</scope>
 </dependency>
+```
+
+```kotlin
+testImplementation("io.github.laipan009.nplusone:nplusone-guard-spring-boot-starter:0.1.0")
 ```
 
 Запустите тесты. Тест, в котором случился N+1, падает с сообщением, показанным в начале. Явный

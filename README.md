@@ -6,6 +6,7 @@ English · [Русский](README.ru.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Java 21](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.laipan009.nplusone/nplusone-guard-spring-boot-starter)](https://central.sonatype.com/artifact/io.github.laipan009.nplusone/nplusone-guard-spring-boot-starter)
 
 **Makes your Spring Boot tests fail when Hibernate runs an N+1 query.** One dependency in test
 scope, no annotations, no base class, no assertions to write: every `@SpringBootTest` is guarded.
@@ -55,22 +56,19 @@ Requires JDK 21, Spring Boot 3.5.x and Hibernate ORM 6.6. Other versions have no
 
 ## Quick start
 
-The artifact is not yet on Maven Central. Build and install it locally:
-
-```sh
-./mvnw clean verify
-./mvnw install -DskipTests
-```
-
-Add it to the project you want to guard:
+Add the dependency to the project you want to guard:
 
 ```xml
 <dependency>
     <groupId>io.github.laipan009.nplusone</groupId>
     <artifactId>nplusone-guard-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <scope>test</scope>
 </dependency>
+```
+
+```kotlin
+testImplementation("io.github.laipan009.nplusone:nplusone-guard-spring-boot-starter:0.1.0")
 ```
 
 Run the tests. A test that triggers an N+1 fails with the message shown at the top. A loop of
