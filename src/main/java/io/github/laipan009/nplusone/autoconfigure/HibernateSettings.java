@@ -4,6 +4,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.util.ClassUtils;
 
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Resolves a Hibernate setting that may hold an instance, a {@link Class} or a class name, the three forms
@@ -29,6 +30,21 @@ final class HibernateSettings {
             return Optional.of(instantiate(clazz, type));
         }
         throw new IllegalArgumentException("Cannot resolve " + type.getSimpleName() + " from " + value);
+    }
+
+    /** Session-scoped interceptors accept a supplier, a Class or a class name, instantiated per session. */
+    static <T> Supplier<T> resolveSupplier(Object value, Class<T> type) {
+        if (value instanceof Supplier<?> supplier) {
+            return () -> type.cast(supplier.get());
+        }
+        if (value instanceof Class<?> clazz) {
+            return () -> instantiate(clazz, type);
+        }
+        if (value instanceof String className) {
+            var clazz = ClassUtils.resolveClassName(className.trim(), HibernateSettings.class.getClassLoader());
+            return () -> instantiate(clazz, type);
+        }
+        throw new IllegalArgumentException("Cannot resolve " + type.getSimpleName() + " supplier from " + value);
     }
 
     private static <T> T instantiate(Class<?> clazz, Class<T> type) {

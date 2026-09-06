@@ -16,16 +16,22 @@ final class DetectionScope {
 
     private final String kind;
     private final String description;
+    private final long generation;
     private final Map<String, Integer> explicitBySql = new LinkedHashMap<>();
     private final Map<String, ImplicitEntry> implicitBySubject = new LinkedHashMap<>();
 
-    DetectionScope(String kind, String description) {
+    DetectionScope(String kind, String description, long generation) {
         this.kind = kind;
         this.description = description;
+        this.generation = generation;
     }
 
     String kind() {
         return kind;
+    }
+
+    boolean isCurrent(long currentGeneration) {
+        return generation == currentGeneration;
     }
 
     void countExplicit(String sql) {

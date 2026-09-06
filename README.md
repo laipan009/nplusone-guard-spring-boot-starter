@@ -140,6 +140,7 @@ test fails after the method if there was an N+1 inside it.
   Hibernate's own load and collection-initialization listeners. An inspector, interceptor or
   integrator provider the application had already configured, through `spring.jpa.properties` or
   another `HibernatePropertiesCustomizer`, is kept and chained behind the detector.
+  Session-scoped interceptors retain their per-session lifecycle.
 - The listener that runs before Hibernate's marks the thread with the session and the subject
   being loaded: `lazy load of Author (proxy)`, `lazy load of collection Author.books`,
   `eager select of Publisher`. Every select inspected while the mark is on the stack counts for
@@ -153,13 +154,17 @@ test fails after the method if there was an N+1 inside it.
   the `inScope` call around them. A loop of small transactions that each lazily load one row
   never exceeds the threshold in any session, but does in the unit of work that runs the loop. A
   subject already reported for a session is not reported again for the scopes around it.
-  Sessions still open at that point, such as a `@Transactional` test's own session, are
-  evaluated too; a session that continues after the test is not counted again.
+  Spring closes a test-managed transaction before the guard evaluates its results, so explicit
+  repeats inside `@Transactional` tests are reported too. Sessions still open on background threads
+  are evaluated for the work seen so far; their continuing work and late-closing scopes do not
+  carry violations into the next test.
 - Selects without a mark are counted by text inside the same units of work. More than
   `max-repeats` identical statements is an explicit violation, handled according to
   `nplusone.explicit-queries`.
 - Statements that fetch sequence values (`next value for`, `nextval`) and statements matching the
   allowlist are never counted.
+- Leading SQL comments are accepted, including those added by `hibernate.use_sql_comments`.
+  The original SQL is retained for counting, allowlist matching and reporting.
 
 ## Configuration
 
