@@ -7,6 +7,10 @@
 - Evaluate explicit repeats in test-managed transactions after the transaction closes.
 - Prevent late-closing scopes and continuing evaluated sessions from reporting into later tests.
 - Preserve application session-scoped interceptors and their per-session instances.
+- Keep ignoring the sequence fetches of `hibernate-community-dialects` (Firebird, Informix, Mimer SQL,
+  TimesTen), which the stricter sequence classifier above had started to count.
+- Work in `@BeforeTransaction` and `@AfterTransaction` is now part of the test, a consequence of
+  evaluating after the test transaction ends.
 
 ## 0.1.0 — 2026-09-06
 

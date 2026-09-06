@@ -1,5 +1,13 @@
 package io.github.laipan009.nplusone.core;
 
+import org.hibernate.community.dialect.sequence.AltibaseSequenceSupport;
+import org.hibernate.community.dialect.sequence.FirebirdSequenceSupport;
+import org.hibernate.community.dialect.sequence.InformixSequenceSupport;
+import org.hibernate.community.dialect.sequence.IngresLegacySequenceSupport;
+import org.hibernate.community.dialect.sequence.MaxDBSequenceSupport;
+import org.hibernate.community.dialect.sequence.MimerSequenceSupport;
+import org.hibernate.community.dialect.sequence.PostgreSQLLegacySequenceSupport;
+import org.hibernate.community.dialect.sequence.TimesTenSequenceSupport;
 import org.hibernate.dialect.DatabaseVersion;
 import org.hibernate.dialect.sequence.ANSISequenceSupport;
 import org.hibernate.dialect.sequence.DB2SequenceSupport;
@@ -54,8 +62,12 @@ class SqlStatementTest {
                 ANSISequenceSupport.INSTANCE, DB2SequenceSupport.INSTANCE, DB2iSequenceSupport.INSTANCE,
                 DB2zSequenceSupport.INSTANCE, DerbySequenceSupport.INSTANCE, H2V1SequenceSupport.INSTANCE,
                 H2V2SequenceSupport.INSTANCE, HANASequenceSupport.INSTANCE, HSQLSequenceSupport.INSTANCE,
-                LegacyDB2SequenceSupport.INSTANCE, OracleSequenceSupport.INSTANCE,
-                new OracleSequenceSupport(DatabaseVersion.make(23)), PostgreSQLSequenceSupport.INSTANCE)
+                LegacyDB2SequenceSupport.INSTANCE, new OracleSequenceSupport(DatabaseVersion.make(19)),
+                new OracleSequenceSupport(DatabaseVersion.make(23)), PostgreSQLSequenceSupport.INSTANCE,
+                // hibernate-community-dialects
+                AltibaseSequenceSupport.INSTANCE, FirebirdSequenceSupport.INSTANCE, InformixSequenceSupport.INSTANCE,
+                IngresLegacySequenceSupport.INSTANCE, MaxDBSequenceSupport.INSTANCE, MimerSequenceSupport.INSTANCE,
+                PostgreSQLLegacySequenceSupport.INSTANCE, TimesTenSequenceSupport.INSTANCE)
                 .flatMap(support -> statements(support, "note_seq", "library.note_seq", "\"library\".\"note seq\"",
                         "\"library\".\"note\"\"seq\""));
         var backticks = Stream.of(MariaDBSequenceSupport.INSTANCE, TiDBSequenceSupport.INSTANCE)
@@ -81,6 +93,9 @@ class SqlStatementTest {
             "select 'note_seq.nextval from sys.dummy'",
             "select 'nextval for note_seq from sysibm.sysdummy1'",
             "select a.nextval from sys.dummy where a.id=?",
+            "select a.nextval from sys.dual where a.id=?",
+            "select a.nextval from informix.systables where tabid=2",
+            "select next value for note_seq from rdb$database where 1=0",
             "select nextval(a.sequence_name) from author a",
             "select nextval('note_seq'), a.id from author a"
     })
