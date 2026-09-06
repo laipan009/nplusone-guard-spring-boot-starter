@@ -7,9 +7,9 @@ import io.github.laipan009.nplusone.core.NPlusOneViolationsError;
 import io.github.laipan009.nplusone.core.Violation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.Ordered;
 import org.springframework.test.context.TestContext;
 import org.springframework.test.context.support.AbstractTestExecutionListener;
+import org.springframework.test.context.transaction.TransactionalTestExecutionListener;
 
 import java.util.ArrayList;
 
@@ -26,7 +26,8 @@ public class NPlusOneTestExecutionListener extends AbstractTestExecutionListener
 
     @Override
     public int getOrder() {
-        return Ordered.LOWEST_PRECEDENCE;
+        // After callbacks run in reverse order: evaluate only after the test transaction has completed.
+        return TransactionalTestExecutionListener.ORDER - 1;
     }
 
     @Override

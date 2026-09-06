@@ -8,6 +8,7 @@ import org.hibernate.Interceptor;
 import org.hibernate.cfg.JdbcSettings;
 import org.hibernate.cfg.SessionEventSettings;
 import org.hibernate.integrator.spi.Integrator;
+import org.hibernate.internal.EmptyInterceptor;
 import org.hibernate.jpa.boot.spi.IntegratorProvider;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 @AutoConfiguration(before = HibernateJpaAutoConfiguration.class)
 @ConditionalOnClass({StatementInspector.class, HibernatePropertiesCustomizer.class})
@@ -72,7 +74,20 @@ public class NPlusOneGuardAutoConfiguration {
     }
 
     private static void chainInterceptor(Map<String, Object> properties, NPlusOneDetector detector) {
-        var existing = HibernateSettings.resolve(properties.get(SessionEventSettings.INTERCEPTOR), Interceptor.class);
+        var existing = HibernateSettings.resolve(properties.get(SessionEventSettings.INTERCEPTOR), Interceptor.class)
+                .filter(interceptor -> interceptor != EmptyInterceptor.INSTANCE);
+        var sessionScoped = properties.get(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR);
+        if (existing.isEmpty() && sessionScoped != null) {
+            var supplier = HibernateSettings.resolveSupplier(sessionScoped, Interceptor.class);
+            Supplier<Interceptor> composite = () -> {
+                var interceptor = supplier.get();
+                return interceptor == null ? detector : new CompositeInterceptor(List.of(detector, interceptor));
+            };
+            properties.remove(SessionEventSettings.INTERCEPTOR);
+            properties.put(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR,
+                    chained(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR, sessionScoped, composite));
+            return;
+        }
         properties.put(SessionEventSettings.INTERCEPTOR, existing
                 .map(interceptor -> chained(SessionEventSettings.INTERCEPTOR, interceptor,
                         (Interceptor) new CompositeInterceptor(List.of(detector, interceptor))))

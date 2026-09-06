@@ -3,21 +3,33 @@ package io.github.laipan009.nplusone.autoconfigure;
 import io.github.laipan009.nplusone.core.CompositeInterceptor;
 import io.github.laipan009.nplusone.core.CompositeStatementInspector;
 import io.github.laipan009.nplusone.core.NPlusOneDetector;
+import io.github.laipan009.nplusone.core.Violation;
 import org.hibernate.Interceptor;
-import org.hibernate.integrator.spi.Integrator;
+import org.hibernate.Transaction;
+import org.hibernate.cfg.Configuration;
 import org.hibernate.cfg.JdbcSettings;
 import org.hibernate.cfg.SessionEventSettings;
+import org.hibernate.engine.spi.SharedSessionContractImplementor;
+import org.hibernate.integrator.spi.Integrator;
+import org.hibernate.internal.EmptyInterceptor;
 import org.hibernate.jpa.boot.spi.IntegratorProvider;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -71,6 +83,124 @@ class NPlusOneGuardAutoConfigurationTest {
             var provider = (IntegratorProvider) hibernate.get("hibernate.integrator_provider");
             assertThat(provider.getIntegrators()).hasSize(2).first().isSameAs(applicationIntegrator);
         });
+    }
+
+    @ParameterizedTest
+    @MethodSource("sessionInterceptorSettings")
+    void whenSessionScopedInterceptorConfigured_shouldKeepDistinctDelegatesAndDetectQueries(
+            Object setting, Interceptor factoryInterceptor) {
+        runner.run(context -> {
+            var detector = context.getBean(NPlusOneDetector.class);
+            Map<String, Object> hibernate = new HashMap<>();
+            hibernate.put(JdbcSettings.URL, "jdbc:h2:mem:session-interceptors");
+            hibernate.put(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR, setting);
+            if (factoryInterceptor != null) {
+                hibernate.put(SessionEventSettings.INTERCEPTOR, factoryInterceptor);
+            }
+            context.getBean(HibernatePropertiesCustomizer.class).customize(hibernate);
+
+            var configuration = new Configuration();
+            configuration.getProperties().putAll(hibernate);
+            var selectedInterceptors = new ArrayList<Interceptor>();
+            try (var factory = configuration.buildSessionFactory()) {
+                for (int i = 0; i < 2; i++) {
+                    try (var session = factory.openSession()) {
+                        selectedInterceptors.add(session.unwrap(SharedSessionContractImplementor.class)
+                                .getInterceptor());
+                        var transaction = session.beginTransaction();
+                        for (int j = 0; j < 3; j++) {
+                            assertThat(session.createNativeQuery("select 1", Integer.class).getSingleResult())
+                                    .isEqualTo(1);
+                        }
+                        transaction.commit();
+                    }
+                }
+            }
+
+            assertThat(selectedInterceptors).allSatisfy(interceptor -> {
+                assertThat(interceptor).isInstanceOf(CompositeInterceptor.class);
+                var delegates = ((CompositeInterceptor) interceptor).interceptors();
+                assertThat(delegates).hasSize(2).first().isSameAs(detector);
+                assertThat(delegates.get(1)).isInstanceOfSatisfying(RecordingInterceptor.class, application -> {
+                    assertThat(application.transactionsStarted).isEqualTo(1);
+                    assertThat(application.transactionsCompleted).isEqualTo(1);
+                });
+            });
+            assertThat(((CompositeInterceptor) selectedInterceptors.get(0)).interceptors().get(1))
+                    .isNotSameAs(((CompositeInterceptor) selectedInterceptors.get(1)).interceptors().get(1));
+            assertThat(detector.drainViolations()).hasSize(2).allSatisfy(violation -> {
+                assertThat(violation.kind()).isEqualTo(Violation.Kind.EXPLICIT_QUERY);
+                assertThat(violation.repeats()).isEqualTo(3);
+            });
+        });
+    }
+
+    static Stream<Arguments> sessionInterceptorSettings() {
+        return Stream.of((Supplier<Interceptor>) RecordingInterceptor::new,
+                        RecordingInterceptor.class, RecordingInterceptor.class.getName())
+                .flatMap(setting -> Stream.of(Arguments.of(setting, null),
+                        Arguments.of(setting, EmptyInterceptor.INSTANCE)));
+    }
+
+    @Test
+    void whenFactoryAndSessionScopedInterceptorsConfigured_shouldPreserveFactoryPrecedence() {
+        runner.run(context -> {
+            var detector = context.getBean(NPlusOneDetector.class);
+            var application = new RecordingInterceptor();
+            var supplierCalls = new AtomicInteger();
+            Map<String, Object> hibernate = new HashMap<>();
+            hibernate.put(JdbcSettings.URL, "jdbc:h2:mem:factory-interceptor");
+            hibernate.put(SessionEventSettings.INTERCEPTOR, application);
+            hibernate.put(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR, (Supplier<Interceptor>) () -> {
+                supplierCalls.incrementAndGet();
+                return new RecordingInterceptor();
+            });
+            context.getBean(HibernatePropertiesCustomizer.class).customize(hibernate);
+
+            var configuration = new Configuration();
+            configuration.getProperties().putAll(hibernate);
+            try (var factory = configuration.buildSessionFactory(); var session = factory.openSession()) {
+                var selected = session.unwrap(SharedSessionContractImplementor.class).getInterceptor();
+                assertThat(selected).isInstanceOfSatisfying(CompositeInterceptor.class,
+                        interceptor -> assertThat(interceptor.interceptors()).containsExactly(detector, application));
+                session.beginTransaction().commit();
+            }
+            assertThat(supplierCalls).hasValue(0);
+            assertThat(application.transactionsStarted).isEqualTo(1);
+            assertThat(application.transactionsCompleted).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void whenSessionInterceptorSupplierReturnsNull_shouldStillInstallDetector() {
+        runner.run(context -> {
+            Map<String, Object> hibernate = new HashMap<>();
+            hibernate.put(JdbcSettings.URL, "jdbc:h2:mem:null-interceptor");
+            hibernate.put(SessionEventSettings.SESSION_SCOPED_INTERCEPTOR, (Supplier<Interceptor>) () -> null);
+            context.getBean(HibernatePropertiesCustomizer.class).customize(hibernate);
+
+            var configuration = new Configuration();
+            configuration.getProperties().putAll(hibernate);
+            try (var factory = configuration.buildSessionFactory(); var session = factory.openSession()) {
+                assertThat(session.unwrap(SharedSessionContractImplementor.class).getInterceptor())
+                        .isSameAs(context.getBean(NPlusOneDetector.class));
+            }
+        });
+    }
+
+    public static class RecordingInterceptor implements Interceptor {
+        private int transactionsStarted;
+        private int transactionsCompleted;
+
+        @Override
+        public void afterTransactionBegin(Transaction transaction) {
+            transactionsStarted++;
+        }
+
+        @Override
+        public void afterTransactionCompletion(Transaction transaction) {
+            transactionsCompleted++;
+        }
     }
 
     @Test

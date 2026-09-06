@@ -10,17 +10,14 @@ import java.io.ObjectOutputStream;
 import java.io.Serial;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -53,8 +50,6 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
     /** Scope opened by {@link #inScope(String, Runnable)}. */
     public static final String CUSTOM_SCOPE = "custom";
 
-    private static final String SELECT = "select";
-
     private static final int EVALUATED_SESSIONS_LIMIT = 10_000;
 
     private final int maxRepeats;
@@ -62,9 +57,11 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
     // Interceptor extends Serializable, but a detector holds live per-thread state and is never meant to travel
     private final transient ThreadLocal<Deque<DetectionScope>> openScopes = ThreadLocal.withInitial(ArrayDeque::new);
     private final transient ThreadLocal<Deque<ImplicitLoad>> implicitLoads = ThreadLocal.withInitial(ArrayDeque::new);
-    private final transient Map<UUID, SessionCounts> sessions = new ConcurrentHashMap<>();
-    private final transient Set<UUID> evaluatedSessions = Collections.synchronizedSet(new LinkedHashSet<>());
-    private final transient List<Violation> scopeViolations = new CopyOnWriteArrayList<>();
+    // Counting, scope completion and draining share the detector monitor so each statement belongs to one boundary.
+    private final transient Map<UUID, SessionCounts> sessions = new LinkedHashMap<>();
+    private final transient Set<UUID> evaluatedSessions = new LinkedHashSet<>();
+    private final transient List<Violation> scopeViolations = new ArrayList<>();
+    private transient long generation;
 
     public NPlusOneDetector(int maxRepeats, List<String> allowlist) {
         if (maxRepeats < 1) {
@@ -78,18 +75,18 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
      * Counts the statement and returns it unchanged, as the {@link StatementInspector} contract requires.
      */
     @Override
-    public String inspect(String sql) {
-        if (isSelect(sql) && !isIgnored(sql)) {
+    public synchronized String inspect(String sql) {
+        if (SqlStatement.isCountedSelect(sql) && !isAllowlisted(sql)) {
             var implicitLoad = implicitLoads.get().peek();
             if (implicitLoad == null) {
-                openScopes.get().forEach(scope -> scope.countExplicit(sql));
-            } else {
-                if (!evaluatedSessions.contains(implicitLoad.sessionId())) {
-                    sessions.computeIfAbsent(implicitLoad.sessionId(), SessionCounts::new)
-                            .count(implicitLoad.subject(), sql, implicitLoad.cacheable());
-                }
-                openScopes.get().forEach(scope ->
-                        scope.countImplicit(implicitLoad.subject(), sql, implicitLoad.cacheable()));
+                openScopes.get().stream().filter(scope -> scope.isCurrent(generation))
+                        .forEach(scope -> scope.countExplicit(sql));
+            } else if (!evaluatedSessions.contains(implicitLoad.sessionId())) {
+                sessions.computeIfAbsent(implicitLoad.sessionId(), SessionCounts::new)
+                        .count(implicitLoad.subject(), sql, implicitLoad.cacheable());
+                openScopes.get().stream().filter(scope -> scope.isCurrent(generation))
+                        .forEach(scope -> scope.countImplicit(
+                                implicitLoad.subject(), sql, implicitLoad.cacheable()));
             }
         }
         return sql;
@@ -152,8 +149,8 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
      * @param kind        identifies matching open and close calls, for example {@code transaction}
      * @param description appears in the violation message, for example {@code HTTP GET /books}
      */
-    public void openScope(String kind, String description) {
-        openScopes.get().push(new DetectionScope(kind, description));
+    public synchronized void openScope(String kind, String description) {
+        openScopes.get().push(new DetectionScope(kind, description, generation));
     }
 
     /**
@@ -184,41 +181,43 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
      * Closes the innermost open scope of the given kind and records its violations. Completion callbacks without a
      * matching open scope are ignored: Hibernate can complete a transaction whose begin this detector never saw.
      */
-    public void closeScope(String kind) {
+    public synchronized void closeScope(String kind) {
         var scopes = openScopes.get();
         var closed = removeInnermost(scopes, kind);
         if (scopes.isEmpty()) {
             openScopes.remove();
         }
-        closed.ifPresent(scope -> scopeViolations.addAll(scope.violations(maxRepeats)));
+        closed.filter(scope -> scope.isCurrent(generation))
+                .ifPresent(scope -> scopeViolations.addAll(scope.violations(maxRepeats)));
     }
 
     /**
      * Evaluates every Hibernate session seen since the previous call, returns its violations together with the
      * violations recorded by closed scopes, and forgets both. A session that keeps running after this call, for
      * example on a background thread, is not counted again.
+     * Scopes still open at this boundary are retired; their later statements and completion are ignored.
      *
      * <p>An association that already violates inside one session is not reported a second time by the transaction
      * or request around that session; scope-level implicit violations are for loads spread across sessions.
      */
-    public List<Violation> drainViolations() {
+    public synchronized List<Violation> drainViolations() {
         var result = new ArrayList<Violation>();
         var reportedSubjects = new java.util.HashSet<String>();
-        for (var sessionId : new ArrayList<>(sessions.keySet())) {
-            var counts = sessions.remove(sessionId);
+        sessions.forEach((sessionId, counts) -> {
             rememberEvaluated(sessionId);
             for (var violation : counts.violations(maxRepeats)) {
                 result.add(violation);
                 reportedSubjects.add(violation.subject());
             }
-        }
-        var fromScopes = new ArrayList<>(scopeViolations);
-        scopeViolations.removeAll(fromScopes);
-        for (var violation : fromScopes) {
+        });
+        sessions.clear();
+        for (var violation : scopeViolations) {
             if (violation.kind() == Violation.Kind.EXPLICIT_QUERY || reportedSubjects.add(violation.subject())) {
                 result.add(violation);
             }
         }
+        scopeViolations.clear();
+        generation++;
         return result;
     }
 
@@ -227,14 +226,12 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
     }
 
     private void rememberEvaluated(UUID sessionId) {
-        synchronized (evaluatedSessions) {
-            if (evaluatedSessions.size() >= EVALUATED_SESSIONS_LIMIT) {
-                var oldest = evaluatedSessions.iterator();
-                oldest.next();
-                oldest.remove();
-            }
-            evaluatedSessions.add(sessionId);
+        if (evaluatedSessions.size() >= EVALUATED_SESSIONS_LIMIT) {
+            var oldest = evaluatedSessions.iterator();
+            oldest.next();
+            oldest.remove();
         }
+        evaluatedSessions.add(sessionId);
     }
 
     private static Optional<DetectionScope> removeInnermost(Deque<DetectionScope> scopes, String kind) {
@@ -249,19 +246,7 @@ public class NPlusOneDetector implements StatementInspector, Interceptor {
         return Optional.empty();
     }
 
-    private static boolean isSelect(String sql) {
-        var trimmed = sql.stripLeading();
-        return trimmed.regionMatches(true, 0, SELECT, 0, SELECT.length());
-    }
-
-    private boolean isIgnored(String sql) {
-        return isSequenceStatement(sql) || allowlist.stream().anyMatch(pattern -> pattern.matcher(sql).find());
-    }
-
-    /** {@code select next value for seq}, {@code select nextval('seq')}, {@code select seq.nextval from dual}. */
-    private static boolean isSequenceStatement(String sql) {
-        var lower = sql.stripLeading().toLowerCase(Locale.ROOT);
-        return (lower.startsWith(SELECT) || lower.startsWith("call"))
-                && (lower.contains("next value for") || lower.contains("nextval"));
+    private boolean isAllowlisted(String sql) {
+        return allowlist.stream().anyMatch(pattern -> pattern.matcher(sql).find());
     }
 }

@@ -66,7 +66,7 @@ class UnawareSample {
         assertThat(bookService.titlesOneByOne(library.bookIds())).hasSize(Library.AUTHORS);
     }
 
-    /** The test transaction is still open when the guard evaluates the session; it must still be seen. */
+    /** The guard evaluates after Spring completes the test-managed transaction. */
     @Test
     @Transactional
     void lazyAuthorsInsideTestTransaction() {

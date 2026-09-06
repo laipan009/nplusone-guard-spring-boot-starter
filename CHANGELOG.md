@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Detect SELECTs with leading SQL comments and keep ordinary identifiers containing `nextval`
+  eligible for detection.
+- Evaluate explicit repeats in test-managed transactions after the transaction closes.
+- Prevent late-closing scopes and continuing evaluated sessions from reporting into later tests.
+- Preserve application session-scoped interceptors and their per-session instances.
+
 ## 0.1.0 — 2026-09-06
 
 First public version. Experimental; not yet validated on a production service's test suite.

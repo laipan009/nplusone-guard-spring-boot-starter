@@ -1,9 +1,9 @@
 package io.github.laipan009.nplusone.core;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Statements issued by implicit loads inside one Hibernate session, grouped by subject.
@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class SessionCounts {
 
     private final UUID sessionId;
-    private final Map<String, Entry> bySubject = new ConcurrentHashMap<>();
+    private final Map<String, Entry> bySubject = new LinkedHashMap<>();
 
     SessionCounts(UUID sessionId) {
         this.sessionId = sessionId;
