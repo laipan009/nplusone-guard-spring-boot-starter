@@ -161,8 +161,11 @@ test fails after the method if there was an N+1 inside it.
 - Selects without a mark are counted by text inside the same units of work. More than
   `max-repeats` identical statements is an explicit violation, handled according to
   `nplusone.explicit-queries`.
-- Statements that fetch sequence values (`next value for`, `nextval`) and statements matching the
-  allowlist are never counted.
+- Statements that fetch sequence values are never counted, in the forms the dialects of Hibernate
+  ORM and `hibernate-community-dialects` generate: `select next value for seq`,
+  `select nextval('seq')`, `select seq.nextval from dual` and their variants. A custom dialect that
+  fetches sequences differently needs its statement in the allowlist. Statements matching the
+  allowlist are never counted either.
 - Leading SQL comments are accepted, including those added by `hibernate.use_sql_comments`.
   The original SQL is retained for counting, allowlist matching and reporting.
 
@@ -200,7 +203,9 @@ You can also declare your own `NPlusOneDetector` bean; the auto-configuration ba
 
 Fixtures deserve a look too. Spring Data's `deleteAll()` loads every row before deleting it, and an
 EAGER association on those rows becomes an N+1 inside your `@BeforeEach`; `deleteAllInBatch()`
-does not. This project's own sample fixture was caught exactly that way.
+does not. This project's own sample fixture was caught exactly that way. Everything between the
+guard's reset and its evaluation counts as the test: `@BeforeEach`, `@BeforeTransaction`,
+`@AfterTransaction` and `@AfterEach` included; `@BeforeAll` is not.
 
 For a call tree that shows which Java frames triggered the loads, add
 [JPlusOne](https://github.com/adgadev/jplusone) in test scope next to this starter; the two do
@@ -216,9 +221,13 @@ not interfere.
   loops from three rows up. Seed at least `max-repeats + 1` rows in tests that should catch a loop.
 - **Transactional tests hide lazy loading.** Rows seeded inside a `@Transactional` test's own
   session sit in the first-level cache and are never lazily loaded, so there is nothing to detect.
-  Seed in a separate transaction (`REQUIRES_NEW`, `@Sql`) or keep tests black-box.
+  Seed in a separate transaction (`REQUIRES_NEW`, `@Sql`) or keep tests black-box. Explicit
+  repeats inside such tests are still reported: the guard evaluates after Spring has ended the
+  test transaction.
 - **Parallel tests in one JVM.** Sessions on server threads cannot be tied to a test; the detector
   is shared per Spring context. Surefire forks are fine; `junit.jupiter.execution.parallel` is not.
+  Statement inspection is serialised on one lock inside the detector, which costs nothing in a
+  test suite and is one more reason to keep the starter in test scope.
 - **Async work.** A session that starts on a background thread and outlives the test method is
   evaluated with whatever it has done by then and never blamed on the next test.
 - **Chaining order.** The starter's customizer runs last and wraps whatever inspector, interceptor
